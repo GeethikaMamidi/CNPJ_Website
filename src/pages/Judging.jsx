@@ -4,6 +4,7 @@ import Badge from '../components/ui/Badge';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import EmptyState from '../components/ui/EmptyState';
 import ConfirmDialog from '../components/ui/ConfirmDialog';
+import Modal from '../components/ui/Modal';
 import { 
   Save, 
   Send, 
@@ -14,7 +15,11 @@ import {
   Lock, 
   Sparkles, 
   Award,
-  AlertCircle
+  AlertCircle,
+  Settings,
+  Plus,
+  Trash2,
+  X
 } from 'lucide-react';
 
 const statusBadge = { 
@@ -34,7 +39,12 @@ export default function Judging() {
   const [evalData, setEvalData] = useState({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState({});
-  const [confirmAction, setConfirmAction] = useState(null); // { type, participantId }
+  const [confirmAction, setConfirmAction] = useState(null);
+
+  // Criteria management
+  const [showCriteriaModal, setShowCriteriaModal] = useState(false);
+  const [newCriterion, setNewCriterion] = useState({ name: '', max_marks: 10 });
+  const [savingCriteria, setSavingCriteria] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -267,6 +277,61 @@ export default function Judging() {
     setConfirmAction(null);
   }
 
+  // ── Criteria management ───────────────────────────────────────────────────
+  async function addCriterion(e) {
+    e.preventDefault();
+    if (!selectedEvent || !newCriterion.name.trim()) return;
+    setSavingCriteria(true);
+    try {
+      const { error } = await supabase.from('criteria').insert({
+        event_id:  selectedEvent,
+        name:      newCriterion.name.trim(),
+        max_marks: Number(newCriterion.max_marks) || 10,
+      });
+      if (error) throw error;
+      setNewCriterion({ name: '', max_marks: 10 });
+      // Refresh criteria immediately
+      const { data } = await supabase.from('criteria').select('*').eq('event_id', selectedEvent).order('created_at');
+      setCriteria(data || []);
+    } catch (err) {
+      console.error('Add criterion error:', err);
+    } finally {
+      setSavingCriteria(false);
+    }
+  }
+
+  async function deleteCriterion(criterionId) {
+    try {
+      await supabase.from('criteria').delete().eq('id', criterionId);
+      setCriteria(prev => prev.filter(c => c.id !== criterionId));
+    } catch (err) {
+      console.error('Delete criterion error:', err);
+    }
+  }
+
+  async function seedDefaultCriteria() {
+    if (!selectedEvent) return;
+    const defaults = [
+      { name: 'Innovation & Creativity', max_marks: 10 },
+      { name: 'Technical Execution',     max_marks: 10 },
+      { name: 'Presentation & Clarity',  max_marks: 10 },
+      { name: 'Feasibility & Impact',    max_marks: 10 },
+      { name: 'Overall Impression',      max_marks: 10 },
+    ];
+    setSavingCriteria(true);
+    try {
+      for (const d of defaults) {
+        await supabase.from('criteria').insert({ event_id: selectedEvent, ...d });
+      }
+      const { data } = await supabase.from('criteria').select('*').eq('event_id', selectedEvent).order('created_at');
+      setCriteria(data || []);
+    } catch (err) {
+      console.error('Seed criteria error:', err);
+    } finally {
+      setSavingCriteria(false);
+    }
+  }
+
   if (loading && judges.length === 0) return <LoadingSpinner label="Initializing judging portal..." />;
 
   const maxTotal = criteria.reduce((sum, c) => sum + Number(c.max_marks || 0), 0);
@@ -325,19 +390,49 @@ export default function Judging() {
         </div>
 
         {/* Criteria Tags Strip */}
-        {criteria.length > 0 && (
-          <div className="mt-5 pt-4 border-t border-slate-800/80 flex flex-wrap items-center gap-2">
-            <span className="text-xs font-semibold text-slate-400 mr-2">Evaluation Rubric:</span>
-            {criteria.map(c => (
-              <span key={c.id} className="px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
-                {c.name}: <strong className="text-white font-mono">{c.max_marks} pts</strong>
+        <div className="mt-5 pt-4 border-t border-slate-800/80 flex flex-wrap items-center gap-2">
+          <span className="text-xs font-semibold text-slate-400 mr-2">Evaluation Rubric:</span>
+          {criteria.length > 0 ? (
+            <>
+              {criteria.map(c => (
+                <span key={c.id} className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/10 text-indigo-300 border border-indigo-500/20">
+                  {c.name}: <strong className="text-white font-mono">{c.max_marks} pts</strong>
+                  <button
+                    onClick={() => deleteCriterion(c.id)}
+                    className="hover:text-rose-400 text-slate-400 ml-1"
+                    title="Delete criterion"
+                  >
+                    <X size={12} />
+                  </button>
+                </span>
+              ))}
+              <span className="ml-auto text-xs font-bold text-slate-300 font-mono">
+                Max Total: {maxTotal} pts
               </span>
-            ))}
-            <span className="ml-auto text-xs font-bold text-slate-300 font-mono">
-              Max Total: {maxTotal} pts
-            </span>
-          </div>
-        )}
+            </>
+          ) : (
+            selectedEvent && (
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-amber-400">No criteria set for this event track.</span>
+                <button
+                  onClick={seedDefaultCriteria}
+                  disabled={savingCriteria}
+                  className="px-3 py-1 rounded-lg text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md transition disabled:opacity-50"
+                >
+                  {savingCriteria ? 'Adding...' : '+ Auto-Add Standard Criteria'}
+                </button>
+              </div>
+            )
+          )}
+          {selectedEvent && (
+            <button
+              onClick={() => setShowCriteriaModal(true)}
+              className="ml-2 flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-300 bg-slate-800 hover:bg-slate-700 border border-slate-700 transition"
+            >
+              <Plus size={13} /> Add Criterion
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Main Judging Area */}
@@ -390,7 +485,7 @@ export default function Judging() {
                     </Badge>
                     <div className="text-right">
                       <span className="font-display text-xl font-black text-white font-mono">
-                        {entry.totalScore}
+                        {typeof entry.totalScore === 'number' ? Number(entry.totalScore.toFixed(2)) : entry.totalScore}
                       </span>
                       <span className="text-xs text-slate-400 font-mono"> / {maxTotal}</span>
                       <span className="ml-1.5 text-xs font-semibold text-indigo-400">({percent}%)</span>
@@ -401,7 +496,19 @@ export default function Judging() {
                 {/* Rubric Criteria Inputs / View */}
                 <div className="p-6 space-y-6">
                   {criteria.length === 0 ? (
-                    <p className="text-xs text-amber-400">⚠️ No criteria configured for this event. Configure criteria in schema.</p>
+                    <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-amber-300">No evaluation criteria set for this event.</p>
+                        <p className="text-xs text-slate-400 mt-0.5">Add criteria so judges can input marks for each team.</p>
+                      </div>
+                      <button
+                        onClick={seedDefaultCriteria}
+                        disabled={savingCriteria}
+                        className="px-3.5 py-2 rounded-xl text-xs font-semibold bg-indigo-600 hover:bg-indigo-500 text-white shadow-md transition disabled:opacity-50"
+                      >
+                        {savingCriteria ? 'Adding...' : '+ Auto-Add Default Criteria (40 pts)'}
+                      </button>
+                    </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                       {criteria.map(c => {
@@ -431,7 +538,7 @@ export default function Judging() {
                                   type="range"
                                   min="0"
                                   max={c.max_marks}
-                                  step="0.5"
+                                  step="0.1"
                                   value={currentMark}
                                   onChange={e => handleMarkChange(p.id, c.id, e.target.value, c.max_marks)}
                                   className="w-full accent-indigo-500 cursor-pointer"
@@ -440,10 +547,10 @@ export default function Judging() {
                                   type="number"
                                   min="0"
                                   max={c.max_marks}
-                                  step="0.5"
+                                  step="0.1"
                                   value={currentMark}
                                   onChange={e => handleMarkChange(p.id, c.id, e.target.value, c.max_marks)}
-                                  className="w-16 px-2.5 py-1 text-center font-mono font-bold text-sm rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-indigo-500 focus:outline-none"
+                                  className="w-20 px-2 py-1 text-center font-mono font-bold text-sm rounded-lg bg-slate-900 border border-slate-700 text-white focus:border-indigo-500 focus:outline-none"
                                 />
                               </div>
                             )}
@@ -528,6 +635,59 @@ export default function Judging() {
         confirmLabel={confirmAction?.type === 'submit' ? 'Confirm Submission' : 'Reopen Session'}
         variant={confirmAction?.type === 'submit' ? 'info' : 'warning'}
       />
+
+      {/* Add Criterion Modal */}
+      <Modal
+        isOpen={showCriteriaModal}
+        onClose={() => setShowCriteriaModal(false)}
+        title="Add Evaluation Criterion"
+      >
+        <form onSubmit={addCriterion} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-1.5">
+              Criterion Name *
+            </label>
+            <input
+              required
+              type="text"
+              placeholder="e.g. Code Quality, Presentation, Innovation"
+              value={newCriterion.name}
+              onChange={e => setNewCriterion({ ...newCriterion, name: e.target.value })}
+              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/80 border border-slate-800 text-slate-100 placeholder-slate-500 text-sm focus:border-indigo-500 focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold uppercase tracking-wider text-slate-300 mb-1.5">
+              Maximum Marks *
+            </label>
+            <input
+              required
+              type="number"
+              min="1"
+              step="0.5"
+              value={newCriterion.max_marks}
+              onChange={e => setNewCriterion({ ...newCriterion, max_marks: e.target.value })}
+              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950/80 border border-slate-800 text-slate-100 placeholder-slate-500 text-sm focus:border-indigo-500 focus:outline-none"
+            />
+          </div>
+          <div className="flex justify-end gap-3 pt-3 border-t border-slate-800">
+            <button
+              type="button"
+              onClick={() => setShowCriteriaModal(false)}
+              className="px-4 py-2 text-sm text-slate-300 bg-slate-800 hover:bg-slate-700 rounded-xl transition"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={savingCriteria}
+              className="px-5 py-2 text-sm font-semibold rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 text-white shadow-lg disabled:opacity-50 transition"
+            >
+              {savingCriteria ? 'Adding...' : 'Add Criterion'}
+            </button>
+          </div>
+        </form>
+      </Modal>
     </div>
   );
 }

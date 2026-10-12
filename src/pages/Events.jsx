@@ -115,9 +115,21 @@ export default function Events() {
       }
       const payload = { name: ev.name, category: ev.category, description: ev.description, status: 'upcoming' };
       try {
-        const { error } = await supabase.from('events').insert(payload);
+        const { data: newEv, error } = await supabase.from('events').insert(payload).select('id').single();
         if (error) throw error;
-        logs.push({ ok: true,  msg: `✓ ${ev.name} (${ev.category})` });
+        
+        // Auto-seed default criteria for this event
+        if (newEv?.id) {
+          const defaultCriteria = [
+            { event_id: newEv.id, name: 'Technical Execution', max_marks: 10 },
+            { event_id: newEv.id, name: 'Innovation & Approach', max_marks: 10 },
+            { event_id: newEv.id, name: 'Design / Accuracy', max_marks: 10 },
+            { event_id: newEv.id, name: 'Q&A & Viva', max_marks: 10 },
+          ];
+          await supabase.from('criteria').insert(defaultCriteria);
+        }
+
+        logs.push({ ok: true,  msg: `✓ ${ev.name} (${ev.category}) + criteria added` });
         existing.add(ev.name.toUpperCase().trim());
       } catch (err) {
         logs.push({ ok: false, msg: `✗ ${ev.name}: ${err.message}` });
@@ -156,7 +168,16 @@ export default function Events() {
       if (editingItem) {
         await supabase.from('events').update(form).eq('id', editingItem.id);
       } else {
-        await supabase.from('events').insert(form);
+        const { data: newEv } = await supabase.from('events').insert(form).select('id').single();
+        if (newEv?.id) {
+          const defaultCriteria = [
+            { event_id: newEv.id, name: 'Technical Execution', max_marks: 10 },
+            { event_id: newEv.id, name: 'Innovation & Approach', max_marks: 10 },
+            { event_id: newEv.id, name: 'Design / Accuracy', max_marks: 10 },
+            { event_id: newEv.id, name: 'Q&A & Viva', max_marks: 10 },
+          ];
+          await supabase.from('criteria').insert(defaultCriteria);
+        }
       }
       setShowModal(false);
       await fetchItems();

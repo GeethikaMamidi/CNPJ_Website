@@ -82,6 +82,7 @@ export default function Judges() {
   const [showImport, setShowImport]     = useState(false);
   const [importing, setImporting]       = useState(false);
   const [importLog, setImportLog]       = useState([]);
+  const [cleaningDuplicates, setCleaningDuplicates] = useState(false);
 
   useEffect(() => {
     fetchItems();
@@ -124,13 +125,23 @@ export default function Judges() {
     return match?.id ?? null;
   }
 
-  // ── Bulk import from sheet ──────────────────────────────────────────────────
+  // ── Bulk import from sheet (with dedupe) ────────────────────────────────────
   async function handleBulkImport() {
     setImporting(true);
     setImportLog([]);
     const logs = [];
 
+    // Build a set of existing "name||email" keys to avoid duplicates
+    const existing = new Set(
+      items.map(i => `${i.name.trim().toLowerCase()}||${(i.email || '').trim().toLowerCase()}`)
+    );
+
     for (const j of SHEET_JUDGES) {
+      const key = `${j.name.trim().toLowerCase()}||${j.email.trim().toLowerCase()}`;
+      if (existing.has(key)) {
+        logs.push({ ok: null, msg: `— ${j.name} (${j.event}): already exists, skipped` });
+        continue;
+      }
       const eventId = resolveEventId(j.event);
       const payload = {
         name:              j.name,
@@ -143,7 +154,8 @@ export default function Judges() {
       try {
         const { error } = await supabase.from('judges').insert(payload);
         if (error) throw error;
-        logs.push({ ok: true,  msg: `✓ ${j.name} → ${eventId ? j.event : '(event not found in DB)'}` });
+        existing.add(key);
+        logs.push({ ok: true, msg: `✓ ${j.name} → ${eventId ? j.event : '⚠ event not in DB'}` });
       } catch (err) {
         logs.push({ ok: false, msg: `✗ ${j.name}: ${err.message}` });
       }
@@ -152,6 +164,49 @@ export default function Judges() {
     setImportLog(logs);
     setImporting(false);
     await fetchItems();
+  }
+
+  // ── Remove existing duplicate judges from database ──────────────────────────
+  async function cleanDuplicateJudges() {
+    setCleaningDuplicates(true);
+    try {
+      const { data: allJudges, error } = await supabase
+        .from('judges')
+        .select('id, name, email, created_at')
+        .order('created_at', { ascending: true });
+
+      if (error) throw error;
+
+      const seen = new Set();
+      const duplicateIds = [];
+
+      for (const j of allJudges || []) {
+        const key = `${(j.name || '').trim().toLowerCase()}||${(j.email || '').trim().toLowerCase()}`;
+        if (seen.has(key)) {
+          duplicateIds.push(j.id);
+        } else {
+          seen.add(key);
+        }
+      }
+
+      if (duplicateIds.length === 0) {
+        alert('No duplicate judges found in the database!');
+      } else {
+        const confirmDelete = window.confirm(`Found ${duplicateIds.length} duplicate judge entries. Remove them now?`);
+        if (confirmDelete) {
+          for (const id of duplicateIds) {
+            await supabase.from('judges').delete().eq('id', id);
+          }
+          alert(`Successfully removed ${duplicateIds.length} duplicate judges!`);
+          await fetchItems();
+        }
+      }
+    } catch (err) {
+      console.error('Error cleaning duplicate judges:', err);
+      alert('Failed to clean duplicates: ' + err.message);
+    } finally {
+      setCleaningDuplicates(false);
+    }
   }
 
   // ── Form open helpers ────────────────────────────────────────────────────────
@@ -238,6 +293,14 @@ export default function Judges() {
           <p className="text-xs text-slate-400 mt-1">Manage external panelists, university professors, and assigned tracks</p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={cleanDuplicateJudges}
+            disabled={cleaningDuplicates}
+            className="flex items-center gap-2 bg-rose-950/40 hover:bg-rose-900/60 border border-rose-800/60 text-rose-300 px-3.5 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 active:scale-95 disabled:opacity-50"
+            title="Keep one entry per judge and delete duplicates"
+          >
+            <Trash2 size={16} /> {cleaningDuplicates ? 'Cleaning...' : 'Remove Duplicates'}
+          </button>
           <button
             onClick={() => { setShowImport(true); setImportLog([]); }}
             className="flex items-center gap-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 px-4 py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 active:scale-95"
